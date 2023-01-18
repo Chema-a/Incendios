@@ -25,16 +25,11 @@ def plot_points():
         return lat,lon
 
 def active_fire():
-    data = fires.get_modis(region="central-america")  
+    data = fires.get_viirs_suomi(region="central-america")  
     # Transform json input to python objects
     #input_dict = json.loads(data)
 
     # Filter python objects with list comprehensions
-    print(data[3])
-    output_dict = [x for x in data if x[2] <= -103.6858]
-
-
-    print(output_dict)  
 
 
 

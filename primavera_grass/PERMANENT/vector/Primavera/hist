@@ -1,0 +1,8 @@
+COMMAND: v.in.ogr input="D:\Escritorio\Modular\Primavera.shp" output="Primavera" min_area=0.0001 type="" snap=-1
+GISDBASE: D:\Escritorio\Modular
+LOCATION: primavera_grass MAPSET: PERMANENT USER: chiva DATE: Tue Jan 10 21:13:37 2023
+-----------------------------------------------------
+1 polígonos de entrada
+Área total: 3.21014E+08 (3 areas)
+Área solapada: 0 (0 areas)
+Área sin categoría: 0.0433806 (2 areas)
