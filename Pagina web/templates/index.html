@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mapa de la Primavera</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+</head>
+<body>
+    <div>
+        <button id="loadWildfires">Cargar Incendios</button>
+    </div>
+    <div id="map" style="width: 100%; height: 80vh;"></div>
+
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script>
+        var map = L.map('map').setView([20.635, -103.57], 12);
+        var tileLayer;
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        }).addTo(map);
+
+        var loadWildfiresButton = document.getElementById('loadWildfires');
+        
+        loadWildfiresButton.addEventListener('click', function() {
+            // Enviar una solicitud al servidor para cargar los incendios en el mapa
+            $.get('/kauil/load_wildfires', function(response) {
+                if (tileLayer) {
+                    tileLayer.remove();
+                }
+
+                map.off();
+                map.remove();
+                map = L.map('map').setView([20.6, -103.57], 12);
+
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    maxZoom: 19,
+                }).addTo(map);
+
+                $('#map').append('<div id="map" style="width: 100%; height: 80vh;"></div>');
+                $('#map').append(response);
+            });
+        });
+    </script>
+</body>
+</html>
