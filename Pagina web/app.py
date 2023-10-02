@@ -13,7 +13,8 @@ import branca.colormap as cm
 import pdb
 from time import sleep
 from gevent.pywsgi import WSGIServer
-
+import asyncio
+import aiohttp
 
 global intersected_n
 app = Flask(__name__)
@@ -75,7 +76,6 @@ def get_intersected_data():
     return intersected
 
 def getWeatherData(intersected):
-#   
     ee.Initialize()
     wind_speed = []
     fuel_depth=[]
@@ -198,24 +198,36 @@ def getWeatherData(intersected):
 
     fuel_depth = replace_zero_with_average(fuel_depth)
     # Calcular el índice de propagación del fuego para los puntos de calor de referencia
-    heat_points_I = []
+    heat_points = []
     I = []
     # pdb.set_trace()
     for i, row in intersected.iterrows():
         fuelload_val = fuelload[i]
-        #fuelload = 0.033976 #lbs/ft^2
-    #     fuel_depth_val = fuelload[i]
         fuel_depth_val = fuel_depth[i]
-    #     fuel_depth_val = 10
         fuelsav = 3500
         slope_val = slope[i] # Pendiente en grados
-        wind_speed_val = wind_speed[i] * 2.237 # Velocidad del viento en mph
+        wind_speed_val = wind_speed[i] * 2.237 # Velocidad del viento en m/s
         temperature_val = temp[i]
-        fuel_moisture_val = fuel_moisture[i] / 1000# Humedad de combustible
-        I_val = GetSimpleFireSpread(fuelload_val, fuel_depth_val, wind_speed_val, slope_val, fuel_moisture_val, fuelsav) # Índice de propagación del fuego
-        I.append(I_val[0])
-        # Convertir los datos en intersected['I'] a tipo float
-    intersected["I"] = I
+        fuel_moisture_val = fuel_moisture[i] / 1000 # Humedad de combustible
+        
+        # Calcular el índice de propagación del fuego para cada punto de calor de referencia
+        point_indices = []
+        if heat_points:
+            for heat_point in heat_points:
+                heat_x, heat_y = heat_point
+                distance_to_heat = math.sqrt((row.geometry.centroid.x - heat_x)**2 + (row.geometry.centroid.y - heat_y)**2)
+                # Calcular la influencia basada en la intensidad del fuego en los heat points (puedes ajustar el factor)
+                fire_intensity = 100  # Aquí puedes usar la intensidad real del fuego en el punto de calor
+                if distance_to_heat != 0:
+                    influence_factor = fire_intensity / distance_to_heat
+                else:
+                    pass
+                point_indices.append(GetSimpleFireSpread(fuelload_val, fuel_depth_val, wind_speed_val, slope_val, fuel_moisture_val, fuelsav)[0] * influence_factor)
+        else:
+            point_indices.append(GetSimpleFireSpread(fuelload_val, fuel_depth_val, wind_speed_val, slope_val, fuel_moisture_val, fuelsav)[0] * 1)
+        # Calcular el índice de propagación del fuego para el cuadrante actual
+        I_val = sum(point_indices)
+        I.append(I_val)
     
     return str(I)
     
@@ -330,67 +342,167 @@ def load_wildfires():
         app.logger.error(f"Error en la carga de incendios: {str(e)}")
 
 
+async def fetch_weather_data(session, url, params):
+    async with session.get(url, params=params) as response:
+        if response.status == 200:
+            return await response.json()
+        else:
+            return None
+
 @app.route('/kauil/load_DataAndShowSpreadRate')
-def load_DataAndShowSpreadRate():
+async def load_DataAndShowSpreadRate():
     intersected = get_intersected_data()
+    intersected['I'] = await getWeatherDataAsync(intersected)
+    intersected['I']  = intersected['I'].astype(float)
+    # Enviar los datos como respuesta JSON
+    print(intersected['I'])
+    return jsonify({'I': intersected['I'].tolist()})
 
-    I = getWeatherData(intersected)
-# ERROR AQUI
-    intersected['I'] = intersected['I'].astype(float)
+async def getWeatherDataAsync(intersected):
+    async with aiohttp.ClientSession() as session:
+        ee.Initialize()
+        tasks = []
+        coordenadas = []
+            # Establecer los parámetros de la consulta
+        fecha_inicio = '2023-01-01'
+        fecha_fin = '2023-12-31'
+         # Consulta de datos de vegetación
+        coleccion = ee.ImageCollection('MODIS/006/MOD13A2').filterDate(fecha_inicio, fecha_fin)
 
-    # Crear una función que asigna el color adecuado a cada valor del índice de propagación
-    colormap = cm.LinearColormap(colors=['green', 'yellow', 'orange', 'red'], vmin=intersected['I'].min(), vmax=intersected['I'].max())
+        # Load the Global Forest Change dataset
+        dataset = ee.Image('UMD/hansen/global_forest_change_2019_v1_7')
 
-    # Crear el objeto de Folium
-    geojson = folium.GeoJson(intersected, name='Indice de propagacion del fuego', 
-                            tooltip=folium.features.GeoJsonTooltip(fields=['I'], 
-                                                                    labels=True, 
-                                                                    sticky=False),
-                            style_function=lambda feature: {
-                                'fillColor': colormap(feature['properties']['I']),
-                                'color': 'black',
-                                'weight': 1,
-                                'fillOpacity': 0.7
-                            })
+        # Select the tree cover band
+        treeCover = dataset.select('treecover2000')
+        for i, row in intersected.iterrows():
+            y_centrum, x_centrum = row.geometry.centroid.y, row.geometry.centroid.x
+            coordenadas.append([x_centrum, y_centrum])
 
-    # Crear el mapa de Folium y agregar el objeto GeoJson
-    mapa = folium.Map(location=[coordinatesPrimavera[0][1], coordinatesPrimavera[0][0]], zoom_start=10)
-    geojson.add_to(mapa)
+            region = ee.Geometry.Point(coordenadas[i])
+            roi = ee.Geometry.Point(coordenadas[i])
+            params = {
+                "lat": y_centrum,
+                "lon": x_centrum,
+                "appid": "88ea1e1a48e480178b9c4ab177c2475f",
+                "units": "metric"
+            }
 
-    # Agregar la leyenda al mapa de Folium
-    colormap.caption = 'Indice de propagacion del fuego'
-    colormap.add_to(mapa)
+            url = "https://api.openweathermap.org/data/2.5/weather"
+            task = fetch_weather_data(session, url, params)
+            tasks.append(task)
 
-    # Mostrar el mapa de Folium
-    mapa.save('templates/map2.html') 
+        weather_data = await asyncio.gather(*tasks)
+        wind_speed = []
+        fuel_depth=[]
+        temp = []
+        slope = []
+        fuel_moisture = []
+        fuelload = []
+        index = 1
+        for data in weather_data:
+            if data is not None:
+                index = index +1
+                print(f"Coordenadas del cuadrante {index}")
+    # Extraer la velocidad del viento
+                wind_speed.append(data["wind"]["speed"])
+                temp.append(data["main"]["temp"])
+                # return 'ENTRA'
 
-    with open('templates/map2.html', 'r') as file:
-        html_content = file.read()
+                imagen = coleccion.select('NDVI').mean().clip(region)
+
+                # Obtener una región de interés como una imagen en forma de píxeles
+                datos_imagen = imagen.reduceRegion(reducer=ee.Reducer.mean(), geometry=region, scale=20)
+
+            
+            # Obtener el valor promedio del NDVI en la región de interés
+                valor_ndvi = datos_imagen.get('NDVI')
 
 
-    script = """
-   <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.js"  charset="utf-8" ></script>
-    """
-    
-  
-   # Buscar el marcador o comentario en el HTML y agregar el script justo antes o después de él
-    # html_content = html_content.replace('<!-- Aquí puedes agregar comentarios o marcadores -->', script)
+    # FUELLOAD
+                # Extraer el valor del NDVI
+                valor_ndvi = ee.Number(valor_ndvi)
 
+                # Estimar la masa de vegetación en lb/ft^2
+                slope_ = 0.5  # Pendiente de la relación lineal
+                intercept = 0.2  # Término de intercepción de la relación lineal
 
-    # Agregar el script al contenido HTML
-    # html_content = html_content.replace('</head>', script + '</head>')
-    html_content = html_content.replace('<head>', '<head>' + script)
-    # Guardar el contenido modificado en la página HTML
-    with open('templates/map2.html', 'w') as file:
-        file.write(html_content)
+                # Añadir valores de la masa de vegetacion a la lista
+                vegetation_mass = valor_ndvi.multiply(slope_).add(intercept)
+                fuelload.append(vegetation_mass.getInfo())
 
+                
+    # FUELDEPTH
+                # Calculate the mean tree cover within the region of interest
+                treeCover_mean = treeCover.reduceRegion(ee.Reducer.mean(), roi, 30)
 
-    return render_template('map2.html')
-    
-    # return str(I)
-    
+                # Get the tree cover value
+                treeCoverValue = ee.Number(treeCover_mean.get('treecover2000'))
 
-    return 'Yeahhhh'
+                # Convert tree cover from percentage to feet
+                conversion_factor = 43.560  # 1 acre = 43,560 square feet
+                treeCoverValue_feet = treeCoverValue.multiply(conversion_factor)
+
+                # Añadir valores del fuel depth a la lista
+                fuel_depth.append(treeCoverValue_feet.getInfo())
+
+    # SLOPE
+                # Extraer la altitud y la presión atmosférica para calcular la pendiente de la respuesta JSON
+                altitude = None
+                atmospheric_pressure = data["main"]["pressure"]  # En hPa
+                try:
+                    altitude = data["main"]["sea_level"]  # En metros
+                    slope.append(0.102 * altitude / atmospheric_pressure)  # En grados
+                except KeyError:
+                    slope.append(0)
+
+    # FUEL MOISTURE
+                # Calcular la humedad de combustible utilizando la fórmula de Deeming
+                temp_calculate = data["main"]["temp"] - 273.15  # Convertir de Kelvin a Celsius
+                relative_moisture = data["main"]["humidity"]
+                precipitation = data.get("rain", {}).get("1h", 0)  # Obtener la precipitación de los últimos 60 minutos (si está disponible)
+                wind_speed_calculate = data["wind"]["speed"]
+
+                fuel_moisture.append(20 + 280 / (temp_calculate + 273) - relative_moisture + 0.1 * wind_speed_calculate + 0.2 * precipitation)
+            else:
+                print('La solicitud falló con el código de estado:')
+        fuel_depth = replace_zero_with_average(fuel_depth)
+        slope = replace_zero_with_average(slope)
+        # Coordenadas de los puntos de calor de referencia
+        heat_points = [(-103.5306,20.7154), (-103.5487,20.7034), (-103.5388,20.7049), (-103.5413,20.6959), (-103.5314,20.6974) ,(-103.5217,20.6988) ,(-103.5298, 20.6883), (-103.52, 20.6898 )]  # Agrega las coordenadas de los puntos de calor aquí
+        # Calcular el índice de propagación del fuego para los puntos de calor de referencia
+        I = []
+
+        for i, row in intersected.iterrows():
+            fuelload_val = fuelload[i]
+            fuel_depth_val = fuel_depth[i]
+            fuelsav = 3500
+            slope_val = slope[i] # Pendiente en grados
+            wind_speed_val = wind_speed[i] * 2.237 # Velocidad del viento en m/s
+            temperature_val = temp[i]
+            fuel_moisture_val = fuel_moisture[i] / 1000 # Humedad de combustible
+            
+            # Calcular el índice de propagación del fuego para cada punto de calor de referencia
+            point_indices = []
+            if heat_points:
+                for heat_point in heat_points:
+                    heat_x, heat_y = heat_point
+                    distance_to_heat = math.sqrt((row.geometry.centroid.x - heat_x)**2 + (row.geometry.centroid.y - heat_y)**2)
+                    # Calcular la influencia basada en la intensidad del fuego en los heat points (puedes ajustar el factor)
+                    fire_intensity = 100  # Aquí puedes usar la intensidad real del fuego en el punto de calor
+                    if distance_to_heat != 0:
+                        influence_factor = fire_intensity / distance_to_heat
+                    else:
+                        pass
+                    point_indices.append(GetSimpleFireSpread(fuelload_val, fuel_depth_val, wind_speed_val, slope_val, fuel_moisture_val, fuelsav)[0] * influence_factor)
+            else:
+                point_indices.append(GetSimpleFireSpread(fuelload_val, fuel_depth_val, wind_speed_val, slope_val, fuel_moisture_val, fuelsav)[0] * 1)
+            # Calcular el índice de propagación del fuego para el cuadrante actual
+            I_val = sum(point_indices)
+            I.append(I_val)
+            print(I)
+        # Resto del procesamiento de datos aquí...
+
+    return str(I)
     
 
 if __name__ == '__main__':

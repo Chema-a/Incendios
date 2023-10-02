@@ -18,7 +18,7 @@
     <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script>
-        function loading() {
+    function loading() {
             // Mostrar el overlay
             document.getElementById("overlay").style.display = "block";
             // Mostrar el loader
@@ -29,7 +29,7 @@
             document.getElementById("loadDataAndShowPredictions").disabled = true;
         }
 
-        function content_loaded() {
+    function content_loaded() {
             // Ocultar el overlay
             document.getElementById("overlay").style.display = "none";
             // Ocultar el loader
@@ -100,10 +100,44 @@
             content_loaded(); // Ocultar el loader cuando la solicitud se completa
           },
           success: function (response) {
-            $("#map").append(
-              '<div id="map" style="width: 100%; height: 80vh;"></div>'
-            );
-            $("#map").append(response);
+            // Parsea la respuesta JSON para obtener los valores del índice de propagación
+            var values = response['I'];
+
+            // Define tus rangos de colores aquí
+            var colors = ['green', 'yellow', 'orange', 'red'];
+
+            // Calcula el valor mínimo y máximo
+            var minI = Math.min(...values);
+            var maxI = Math.max(...values);
+
+            // Calcula el rango de valores
+            var range = maxI - minI;
+
+            // Función para asignar colores en función del valor del índice de propagación
+            function getColor(value) {
+                var index = Math.floor((value - minI) / range * (colors.length - 1));
+                return colors[index];
+            }
+
+            // Crear el objeto GeoJSON
+            var geojson = L.geoJson(response, {
+                style: function (feature) {
+                    return {
+                        fillColor: getColor(feature.properties.I),
+                        weight: 1,
+                        opacity: 1,
+                        color: 'black',
+                        fillOpacity: 0.7
+                    };
+                },
+                onEachFeature: function (feature, layer) {
+                    // Agregar tooltips u otras interacciones si es necesario
+                    layer.bindTooltip('Índice de propagación: ' + feature.properties.I);
+                }
+            });
+
+            // Agregar el objeto GeoJSON al mapa existente
+            geojson.addTo(map);
           },
         });
       });
