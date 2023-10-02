@@ -4,46 +4,109 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Mapa de la Primavera</title>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css">
+    <link rel= "stylesheet" type= "text/css" href= "{{ url_for('static',filename='styles/style.css') }}">
 </head>
 <body>
-    <div>
-        <button id="loadWildfires">Cargar Incendios</button>
+    <div id="buttons-container">
+        <button class="btn" id="loadWildfires">Cargar Incendios</button>
+        <button class="btn" id="loadDataAndShowPredictions">Indices de propagación</button>
     </div>
-    <div id="map" style="width: 100%; height: 80vh;"></div>
-
+    <div style="display: none;" id="overlay"></div>
+    <div id="map"></div>
+    <div style="display: none;" id="loader"></div>
     <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script>
-        var map = L.map('map').setView([20.635, -103.57], 12);
-        var tileLayer;
+        function loading() {
+            // Mostrar el overlay
+            document.getElementById("overlay").style.display = "block";
+            // Mostrar el loader
+            document.getElementById("loader").style.display = "block";
 
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            maxZoom: 19,
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-        }).addTo(map);
+            // Deshabilitar los botones durante la carga
+            document.getElementById("loadWildfires").disabled = true;
+            document.getElementById("loadDataAndShowPredictions").disabled = true;
+        }
 
-        var loadWildfiresButton = document.getElementById('loadWildfires');
-        
-        loadWildfiresButton.addEventListener('click', function() {
-            // Enviar una solicitud al servidor para cargar los incendios en el mapa
-            $.get('/kauil/load_wildfires', function(response) {
-                if (tileLayer) {
-                    tileLayer.remove();
-                }
+        function content_loaded() {
+            // Ocultar el overlay
+            document.getElementById("overlay").style.display = "none";
+            // Ocultar el loader
+            document.getElementById("loader").style.display = "none";
 
-                map.off();
-                map.remove();
-                map = L.map('map').setView([20.6, -103.57], 12);
+            // Habilitar los botones después de la carga
+            document.getElementById("loadWildfires").disabled = false;
+            document.getElementById("loadDataAndShowPredictions").disabled = false;
+        }
 
-                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                    maxZoom: 19,
-                }).addTo(map);
-
-                $('#map').append('<div id="map" style="width: 100%; height: 80vh;"></div>');
-                $('#map').append(response);
-            });
+    function CleanMap() {
+        // Limpiar todas las capas del mapa
+        map.eachLayer(function (layer) {
+          map.removeLayer(layer);
         });
+
+        // Volver a agregar la capa de mapa base
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+          maxZoom: 19,
+        }).addTo(map);
+      }
+      var map = L.map("map").setView([20.635, -103.57], 12);
+
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19,
+        attribution:
+          '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+      }).addTo(map);
+
+      var loadWildfiresButton = document.getElementById("loadWildfires");
+      var loadDataAndShowPredictionsButton = document.getElementById(
+        "loadDataAndShowPredictions"
+      );
+
+      loadWildfiresButton.addEventListener("click", function () {
+        CleanMap();
+        loading();
+        // Enviar una solicitud al servidor para cargar los incendios en el mapa
+        $.ajax({
+          url: "/kauil/load_wildfires",
+          method: "GET",
+          beforeSend: function () {
+            loading(); // Mostrar el loader antes de la solicitud
+          },
+          complete: function () {
+            content_loaded(); // Ocultar el loader cuando la solicitud se completa
+          },
+          success: function (heatPoints) {
+            console.log(heatPoints);
+            // Agrega los puntos al mapa existente
+            heatPoints.forEach(function (point) {
+                L.marker([point[1], point[0]]).addTo(map); // Agrega un marcador en la posición
+            });
+        },
+        });
+      });
+
+      loadDataAndShowPredictionsButton.addEventListener("click", function () {
+        CleanMap();
+        loading();
+        $.ajax({
+          url: "/kauil/load_DataAndShowSpreadRate",
+          method: "GET",
+          beforeSend: function () {
+            loading(); // Mostrar el loader antes de la solicitud
+          },
+          complete: function () {
+            content_loaded(); // Ocultar el loader cuando la solicitud se completa
+          },
+          success: function (response) {
+            $("#map").append(
+              '<div id="map" style="width: 100%; height: 80vh;"></div>'
+            );
+            $("#map").append(response);
+          },
+        });
+      });
     </script>
-</body>
+  </body>
 </html>

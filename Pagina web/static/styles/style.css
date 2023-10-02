@@ -1,0 +1,93 @@
+/* styles.css */
+body {
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    display: flex;
+}
+
+/* Estilos para el contenedor de botones en la parte izquierda */
+#buttons-container {
+    background-color: #3498db;
+    color: #fff;
+    padding: 20px;
+    width: 200px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: flex-start;
+}
+
+/* Estilos para los botones */
+.btn {
+    background-color: #fff;
+    color: #3498db;
+    border: none;
+    padding: 10px;
+    margin: 5px;
+    width: 100%;
+    text-align: left;
+    cursor: pointer;
+    transition: background-color 0.3s;
+}
+
+/* Estilos para los botones al pasar el mouse */
+.btn:hover {
+    background-color: #ddd;
+}
+
+/* Estilos para el mapa */
+#map {
+    flex: 1;
+    height: 100vh;
+}
+
+#loader {
+    border: 16px solid #D4D4D4;
+    border-radius: 50%;
+    border-top: 16px solid red;
+    border-bottom: 16px solid red;
+    width: 120px;
+    background-color: transparent;
+    height: 120px;
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 99999999;
+    -webkit-animation: spin 2s linear infinite;
+    animation: spin 2s linear infinite;
+}
+
+@-webkit-keyframes spin {
+    0% {
+        -webkit-transform: rotate(0deg);
+    }
+    100% {
+        -webkit-transform: rotate(360deg);
+    }
+}
+
+@keyframes spin {
+    0% {
+        transform: rotate(0deg);
+    }
+    100% {
+        transform: rotate(360deg);
+    }
+}
+
+#overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.7);
+    z-index: 999999;
+}
+
+/* Estilos para inhabilitar todos los elementos, excepto el loader */
+#overlay:active {
+    pointer-events: none;
+}

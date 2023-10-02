@@ -1,37 +1,312 @@
-from flask import Flask, render_template
+from flask import Flask, render_template,jsonify
 import folium
 import geopandas as gpd
-import numpy as np
 from shapely.geometry import Polygon, Point
 from shapely.ops import nearest_points
-from folium.features import DivIcon
+import numpy as np
+import math
+import mpmath
+import ee
+import requests
+import folium
+import branca.colormap as cm
+import pdb
+from time import sleep
+from gevent.pywsgi import WSGIServer
 
+
+global intersected_n
 app = Flask(__name__)
+mpmath.mp.dps = 60
+coordinatesPrimavera = [[-103.6858, 20.7269],[-103.4552,20.5430]]
 
-# Carga del shapefile
-gdf = gpd.read_file('Primavera.shp')
+# Función para cargar el shapefile
+def load_shapefile(file_path):
+    try:
+        gdf = gpd.read_file(file_path)
+        return gdf
+    except Exception as e:
+        raise Exception(f"Error al cargar el shapefile: {str(e)}")
 
-# Definición de la cuadrícula
-xmin, ymin, xmax, ymax = -103.6858, 20.5430, -103.4552, 20.7269
-grid_size = 0.01
-cols = list(np.arange(xmin, xmax, grid_size))
-rows = list(np.arange(ymin, ymax, grid_size))
-rows.reverse()
+# Función para definir la cuadrícula
+def create_grid(xmin, ymin, xmax, ymax, grid_size):
+    cols = list(range(int(xmin), int(xmax), grid_size))
+    rows = list(range(int(ymin), int(ymax), -grid_size))
+    return cols, rows
 
-polygons = []
-for x in cols:
-    for y in rows:
-        polygons.append(Polygon([(x, y), (x + grid_size, y), (x + grid_size, y - grid_size), (x, y - grid_size)]))
+def distance(x1, y1, x2, y2):
+    return np.sqrt((x2 - x1)**2 + (y2 - y1)**2)
 
-grid = gpd.GeoDataFrame({'geometry': polygons})
-intersected = gpd.overlay(gdf, grid, how='intersection')
+def closest_point(p, points):
+    min_distance = float('inf')
+    for i, row in points.iterrows():
+        dist = distance(p[0], p[1], row.geometry.centroid.x, row.geometry.centroid.y)
+        if dist < min_distance:
+            closest = (row.geometry.centroid.y, row.geometry.centroid.x)
+            min_distance = dist
+    return closest
 
-# Función para encontrar el punto más cercano en una capa GeoDataFrame
-def closest_point(point, gdf):
-    geom_union = gdf.unary_union
-    nearest = nearest_points(point, geom_union)
-    match = gdf[gdf.geometry == nearest[1]]
-    return match.index[0]
+def get_intersected_data():
+    # Carga del shapefile
+    gdf = load_shapefile('Primavera.shp')
+
+        # Definición de la cuadrícula
+    xmin, ymin, xmax, ymax = -103.6858, 20.5430, -103.4552, 20.7269
+
+    grid_size = 0.01
+    cols = list(np.arange(xmin, xmax, grid_size))
+    rows = list(np.arange(ymin, ymax, grid_size))  
+
+
+    ############################################## Cambiado a -grid_size para que disminuya en lugar de aumentar
+    
+    
+    rows.reverse()
+
+    polygons = []
+    for x in cols:
+        for y in rows:
+            polygons.append(Polygon([(x,y), (x+grid_size,y), (x+grid_size,y-grid_size), (x,y-grid_size)]))
+
+
+    grid = gpd.GeoDataFrame({'geometry': polygons})
+    intersected = gpd.overlay(gdf, grid, how='intersection')
+
+    return intersected
+
+def getWeatherData(intersected):
+#   
+    ee.Initialize()
+    wind_speed = []
+    fuel_depth=[]
+    temp = []
+    slope = []
+    fuel_moisture = []
+    fuelload = []
+    coordenadas = []
+    # Definir la URL de la API de OpenWeatherMap y los parámetros de consulta
+    url = "https://api.openweathermap.org/data/2.5/weather"
+
+    # Establecer los parámetros de la consulta
+    fecha_inicio = '2023-01-01'
+    fecha_fin = '2023-12-31'
+
+    # Consulta de datos de vegetación
+    coleccion = ee.ImageCollection('MODIS/006/MOD13A2').filterDate(fecha_inicio, fecha_fin)
+
+    # Load the Global Forest Change dataset
+    dataset = ee.Image('UMD/hansen/global_forest_change_2019_v1_7')
+
+    # Select the tree cover band
+    treeCover = dataset.select('treecover2000')
+
+    # Iterar sobre los registros
+    for i, row in intersected.iterrows():
+
+        y_centrum, x_centrum = row.geometry.centroid.y, row.geometry.centroid.x
+        coordenadas.append([x_centrum, y_centrum])
+
+        print(f"Coordenadas del cuadrante {i}: {x_centrum},{y_centrum}")
+
+        region = ee.Geometry.Point(coordenadas[i])
+       # Define your region of interest (e.g., a point or a geometry) 
+        roi = ee.Geometry.Point(coordenadas[i])
+
+        params = {
+            "lat": y_centrum,  # Latitud
+            "lon": x_centrum,  # Longitud
+            "appid": "88ea1e1a48e480178b9c4ab177c2475f",  # Tu ID de API de OpenWeatherMap
+            "units": "metric"  # Unidades métricas (para obtener la velocidad del viento en m/s)
+        }
+
+        # response = requests.get(url, timeout=10) 
+        # Hacer una solicitud HTTP a la API y obtener la respuesta JSON
+        try:
+            response = requests.get(url, params=params,timeout=20)
+        except:
+            sleep(1.5)
+            continue
+            # return "La solicitud se agotó"
+        if response.status_code == 200:
+            data = response.json()
+            
+# WIND SPEED
+
+            # Extraer la velocidad del viento
+            wind_speed.append(data["wind"]["speed"])
+            temp.append(data["main"]["temp"])
+            # return 'ENTRA'
+
+            imagen = coleccion.select('NDVI').mean().clip(region)
+
+            # Obtener una región de interés como una imagen en forma de píxeles
+            datos_imagen = imagen.reduceRegion(reducer=ee.Reducer.mean(), geometry=region, scale=20)
+
+         
+           # Obtener el valor promedio del NDVI en la región de interés
+            valor_ndvi = datos_imagen.get('NDVI')
+
+
+# FUELLOAD
+            # Extraer el valor del NDVI
+            valor_ndvi = ee.Number(valor_ndvi)
+
+            # Estimar la masa de vegetación en lb/ft^2
+            slope_ = 0.5  # Pendiente de la relación lineal
+            intercept = 0.2  # Término de intercepción de la relación lineal
+
+            # Añadir valores de la masa de vegetacion a la lista
+            vegetation_mass = valor_ndvi.multiply(slope_).add(intercept)
+            fuelload.append(vegetation_mass.getInfo())
+
+            
+# FUELDEPTH
+            # Calculate the mean tree cover within the region of interest
+            treeCover_mean = treeCover.reduceRegion(ee.Reducer.mean(), roi, 30)
+
+            # Get the tree cover value
+            treeCoverValue = ee.Number(treeCover_mean.get('treecover2000'))
+
+            # Convert tree cover from percentage to feet
+            conversion_factor = 43.560  # 1 acre = 43,560 square feet
+            treeCoverValue_feet = treeCoverValue.multiply(conversion_factor)
+
+            # Añadir valores del fuel depth a la lista
+            fuel_depth.append(treeCoverValue_feet.getInfo())
+
+# SLOPE
+            # Extraer la altitud y la presión atmosférica para calcular la pendiente de la respuesta JSON
+            altitude = None
+            atmospheric_pressure = data["main"]["pressure"]  # En hPa
+            try:
+                altitude = data["main"]["sea_level"]  # En metros
+                slope.append(0.102 * altitude / atmospheric_pressure)  # En grados
+            except KeyError:
+                slope.append(0)
+
+# FUEL MOISTURE
+            # Calcular la humedad de combustible utilizando la fórmula de Deeming
+            temp_calculate = data["main"]["temp"] - 273.15  # Convertir de Kelvin a Celsius
+            relative_moisture = data["main"]["humidity"]
+            precipitation = data.get("rain", {}).get("1h", 0)  # Obtener la precipitación de los últimos 60 minutos (si está disponible)
+            wind_speed_calculate = data["wind"]["speed"]
+
+            fuel_moisture.append(20 + 280 / (temp_calculate + 273) - relative_moisture + 0.1 * wind_speed_calculate + 0.2 * precipitation)
+        else:
+            return 'La solicitud falló con el código de estado:', response.status_code
+
+
+    fuel_depth = replace_zero_with_average(fuel_depth)
+    # Calcular el índice de propagación del fuego para los puntos de calor de referencia
+    heat_points_I = []
+    I = []
+    # pdb.set_trace()
+    for i, row in intersected.iterrows():
+        fuelload_val = fuelload[i]
+        #fuelload = 0.033976 #lbs/ft^2
+    #     fuel_depth_val = fuelload[i]
+        fuel_depth_val = fuel_depth[i]
+    #     fuel_depth_val = 10
+        fuelsav = 3500
+        slope_val = slope[i] # Pendiente en grados
+        wind_speed_val = wind_speed[i] * 2.237 # Velocidad del viento en mph
+        temperature_val = temp[i]
+        fuel_moisture_val = fuel_moisture[i] / 1000# Humedad de combustible
+        I_val = GetSimpleFireSpread(fuelload_val, fuel_depth_val, wind_speed_val, slope_val, fuel_moisture_val, fuelsav) # Índice de propagación del fuego
+        I.append(I_val[0])
+        # Convertir los datos en intersected['I'] a tipo float
+    intersected["I"] = I
+    
+    return str(I)
+    
+
+def replace_zero_with_average(arr):
+    # Calcula el promedio de todos los registros del arreglo
+    total_sum = sum(arr)
+    non_zero_count = len(arr) - arr.count(0)
+    average = total_sum / non_zero_count if non_zero_count > 0 else 0
+
+    # Recorre el arreglo y reemplaza los valores iguales a 0 por el promedio
+    for i in range(len(arr)):
+        if arr[i] == 0:
+            arr[i] = average
+
+    return arr
+
+def GetSimpleFireSpread(fuelload, fueldepth, windspeed, slope, fuelmoisture, fuelsav):
+    # Parameters
+    maxval= 0
+    if fuelload > 0:
+        wo = fuelload # Ovendry fuel loading in (lb/ft^2). Amount of primary prod???
+        fd = fueldepth # Fuel depth (ft)
+        if fueldepth == 0:
+            fd = 0.0000000000000001
+
+        wv = windspeed * 88# Wind velocity at midflame height (ft/minute) = 88 * mph
+        fpsa = fuelsav  # Fuel Particle surface area to volume ratio (1/ft)
+        mf = fuelmoisture  # Fuel particle moisture content
+        h = 8000  # Fuel particle low heat content
+        pp = 32.  # Ovendry particle density
+        st = 0.0555  # Fuel particle mineral content
+        se = 0.010  # Fuel Particle effective mineral content
+        mois_ext = 0.12  # Moisture content of extinction or 0.3 if dead
+        #calculate slope as degrees
+        slope_rad = math.atan(slope)
+        slope_degrees = slope_rad / 0.0174533 #radians
+        tan_slope = math.tan(slope_rad) #  in radians
+        # Betas Packing ratio
+        Beta_op = 3.348 * math.pow(fpsa, -0.8189)  # Optimum packing ratio
+        ODBD = wo / fd  # Ovendry bulk density
+        Beta = ODBD / pp #Packing ratio
+        #Beta = 0.00158
+        Beta_rel = Beta / Beta_op
+        # Reaction Intensity
+        WN = wo / (1 + st)  # Net fuel loading
+        #A = 1 / (4.774 * pow(fpsa, 0.1) - 7.27)  # Unknown const
+        A =  133.0 / math.pow(fpsa, 0.7913) #updated A
+        T_max = math.pow(fpsa,1.5) * math.pow(495.0 + 0.0594 * math.pow(fpsa, 1.5),-1.0)  # Maximum reaction velocity
+        #T_max = (fpsa*math.sqrt(fpsa)) / (495.0 + 0.0594 * fpsa * math.sqrt(fpsa))
+        T = T_max * math.pow((Beta / Beta_op),A) * math.exp(A * (1 - Beta / Beta_op))  # Optimum reaction velocity
+        # moisture dampning coefficient
+        NM = 1. - 2.59 * (mf / mois_ext) + 5.11 * math.pow(mf / mois_ext, 2.) - 3.52 * math.pow(mf / mois_ext,3.)  # Moisture damping coeff.
+        # mineral dampning
+        NS = 0.174 * math.pow(se, -0.19)  # Mineral damping coefficient
+        #print(T, WN, h, NM, NS)
+        RI = T * WN * h * NM * NS
+        #RI = 874
+        # Propogating flux ratio
+        PFR = mpmath.power(192.0 + 0.2595 * fpsa, -1) * mpmath.exp((0.792 + 0.681 * mpmath.sqrt(fpsa)) * (Beta + 0.1))# Propogating flux ratio
+        ## Wind Coefficient
+        B = 0.02526 * math.pow(fpsa, 0.54)
+        C = 7.47 * math.exp(-0.1333 * math.pow(fpsa, 0.55))
+        E = 0.715 * math.exp(-3.59 * 10**-4 * fpsa)
+        #WC = C * wv**B * math.pow(Beta / Beta_op, -E) #wind coefficient
+        if wv > (0.9 * RI): #important - don't know source. Matches BEHAVE
+            wv = 0.9 * RI
+        WC = (C * wv ** B) * math.pow((Beta / Beta_op), (-E))
+        #WC= WC*0.74
+        #Slope  coefficient
+        SC = 5.275*(Beta**-0.3)*tan_slope**2
+        #Heat sink
+
+        EHN = math.exp(-138. / fpsa)  # Effective Heating Number = f(surface are volume ratio)
+        QIG = 250. + 1116. * mf  # Heat of preignition= f(moisture content)
+        # rate of spread (ft per minute)
+        #RI = BTU/ft^2
+        numerator = (RI * PFR * (1 + WC + SC))
+        denominator = (ODBD * EHN * QIG)
+        R = numerator / denominator #WC and SC will be zero at slope = wind = 0
+        RT = 384.0/fpsa
+        HA = RI*RT
+        #fireline intensity as described by Albini via USDA Forest Service RMRS-GTR-371. 2018
+        FI = (384.0/fpsa)*RI*(R) ##Uses Reaction Intensity in BTU / ft/ min
+        #FI = HA*R
+        if (RI <= 0):
+            return (maxval, maxval, maxval)
+        return (R, RI, FI)
+    else:
+        return (maxval, maxval, maxval)
+
 
 @app.route('/kauil')
 def index():
@@ -39,29 +314,86 @@ def index():
 
 @app.route('/kauil/load_wildfires')
 def load_wildfires():
-    # Replace this with your actual code to load wildfires
-    # For demonstration purposes, let's add a few sample wildfire points
-    wildfires = [(20.68, -103.6), (20.66, -103.58), (20.71, -103.55)]
+    # return 'TODO VERDE'
+    try:
+        # Carga del shapefile
+        gdf = load_shapefile('Primavera.shp')
+        heat_points = []
+        # heat_points.append(WildfireHotspots())
+        heat_points = [(-103.5306,20.7154), (-103.5487,20.7034), (-103.5388,20.7049), (-103.5413,20.6959), (-103.5314,20.6974) ,(-103.5217,20.6988) ,(-103.5298, 20.6883), (-103.52, 20.6898 )]  # Agrega las coordenadas de los puntos de calor aquí
+        # Download a regional GeoJSON of hotspots detected by the MODIS satellite in a recent 7-day period.
+# Devuelve los datos de coordenadas como JSON
+        return jsonify(heat_points)
+
+    except Exception as e:
+        # Captura cualquier excepción y registra el error
+        app.logger.error(f"Error en la carga de incendios: {str(e)}")
+
+
+@app.route('/kauil/load_DataAndShowSpreadRate')
+def load_DataAndShowSpreadRate():
+    intersected = get_intersected_data()
+
+    I = getWeatherData(intersected)
+# ERROR AQUI
+    intersected['I'] = intersected['I'].astype(float)
+
+    # Crear una función que asigna el color adecuado a cada valor del índice de propagación
+    colormap = cm.LinearColormap(colors=['green', 'yellow', 'orange', 'red'], vmin=intersected['I'].min(), vmax=intersected['I'].max())
+
+    # Crear el objeto de Folium
+    geojson = folium.GeoJson(intersected, name='Indice de propagacion del fuego', 
+                            tooltip=folium.features.GeoJsonTooltip(fields=['I'], 
+                                                                    labels=True, 
+                                                                    sticky=False),
+                            style_function=lambda feature: {
+                                'fillColor': colormap(feature['properties']['I']),
+                                'color': 'black',
+                                'weight': 1,
+                                'fillOpacity': 0.7
+                            })
+
+    # Crear el mapa de Folium y agregar el objeto GeoJson
+    mapa = folium.Map(location=[coordinatesPrimavera[0][1], coordinatesPrimavera[0][0]], zoom_start=10)
+    geojson.add_to(mapa)
+
+    # Agregar la leyenda al mapa de Folium
+    colormap.caption = 'Indice de propagacion del fuego'
+    colormap.add_to(mapa)
+
+    # Mostrar el mapa de Folium
+    mapa.save('templates/map2.html') 
+
+    with open('templates/map2.html', 'r') as file:
+        html_content = file.read()
+
+
+    script = """
+   <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.js"  charset="utf-8" ></script>
+    """
     
-    m = folium.Map(location=[20.6, -103.57], zoom_start=12)
+  
+   # Buscar el marcador o comentario en el HTML y agregar el script justo antes o después de él
+    # html_content = html_content.replace('<!-- Aquí puedes agregar comentarios o marcadores -->', script)
 
-    folium.GeoJson(gdf).add_to(m)
 
-    closest_points = []
-    for p in wildfires:
-        closest_points.append(closest_point(Point(p[1], p[0]), intersected))
+    # Agregar el script al contenido HTML
+    # html_content = html_content.replace('</head>', script + '</head>')
+    html_content = html_content.replace('<head>', '<head>' + script)
+    # Guardar el contenido modificado en la página HTML
+    with open('templates/map2.html', 'w') as file:
+        file.write(html_content)
 
-    for index, row in intersected.iterrows():
-        tooltip = f"{index}"
-        y_centrum, x_centrum = row.geometry.centroid.y, row.geometry.centroid.x
-        if index in closest_points:
-            marker = folium.Marker([y_centrum, x_centrum], icon=folium.Icon(color='red', icon='fire'), tooltip=tooltip)
-        else:
-            marker = folium.Marker([y_centrum, x_centrum], tooltip=tooltip)
-        marker.add_to(m)
 
-    m.save('templates/map.html')
-    return render_template('map.html')
+    return render_template('map2.html')
+    
+    # return str(I)
+    
+
+    return 'Yeahhhh'
+    
 
 if __name__ == '__main__':
+    # http_server = WSGIServer(('', 5000), app)
+    # %http_server.serve_forever()
     app.run(debug=True, host='0.0.0.0')
