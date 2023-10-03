@@ -6,16 +6,18 @@
     <title>Mapa de la Primavera</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css">
     <link rel= "stylesheet" type= "text/css" href= "{{ url_for('static',filename='styles/style.css') }}">
-</head>
-<body>
+  </head>
+  <body>
     <div id="buttons-container">
-        <button class="btn" id="loadWildfires">Cargar Incendios</button>
-        <button class="btn" id="loadDataAndShowPredictions">Indices de propagación</button>
+      <button class="btn" id="loadWildfires">Cargar Incendios</button>
+      <button class="btn" id="loadDataAndShowPredictions">Indices de propagación</button>
     </div>
     <div style="display: none;" id="overlay"></div>
     <div id="map"></div>
     <div style="display: none;" id="loader"></div>
     <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chroma-js/2.1.0/chroma.min.js"></script>
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script>
     function loading() {
@@ -100,45 +102,48 @@
             content_loaded(); // Ocultar el loader cuando la solicitud se completa
           },
           success: function (response) {
-            // Parsea la respuesta JSON para obtener los valores del índice de propagación
-            var values = response['I'];
+              // Obtener los datos de propagación de la respuesta JSON
+              var propagationData = response.features;
 
-            // Define tus rangos de colores aquí
-            var colors = ['green', 'yellow', 'orange', 'red'];
+              // Crear un arreglo de puntos de calor (latitud, longitud, intensidad)
+              var heatPoints = [];
+              propagationData.forEach(function (feature) {
+                  var coordinates = feature.geometry.coordinates;
+                  var intensity = feature.properties.I;
+                  heatPoints.push([coordinates[1], coordinates[0], intensity]);
+              });
 
-            // Calcula el valor mínimo y máximo
-            var minI = Math.min(...values);
-            var maxI = Math.max(...values);
+              // Obtén los valores mínimo y máximo del índice de propagación
+              var minValue = Math.min.apply(Math, heatPoints.map(function (point) {
+                  return point[2];
+              }));
+              var maxValue = Math.max.apply(Math, heatPoints.map(function (point) {
+                return point[2];
+              }));
+              console.log(minValue, maxValue);
 
-            // Calcula el rango de valores
-            var range = maxI - minI;
+              // Define los colores que deseas usar en el gradiente
+              var colors = ['green', 'yellow', 'orange', 'red'];
 
-            // Función para asignar colores en función del valor del índice de propagación
-            function getColor(value) {
-                var index = Math.floor((value - minI) / range * (colors.length - 1));
-                return colors[index];
-            }
+              // Crea una escala de colores personalizada utilizando chroma.js
+              var colorScale = chroma.scale(colors).domain([minValue, maxValue]);
 
-            // Crear el objeto GeoJSON
-            var geojson = L.geoJson(response, {
-                style: function (feature) {
-                    return {
-                        fillColor: getColor(feature.properties.I),
-                        weight: 1,
-                        opacity: 1,
-                        color: 'black',
-                        fillOpacity: 0.7
-                    };
-                },
-                onEachFeature: function (feature, layer) {
-                    // Agregar tooltips u otras interacciones si es necesario
-                    layer.bindTooltip('Índice de propagación: ' + feature.properties.I);
-                }
-            });
+              // Función para asignar colores en función del valor del índice de propagación
+              function getColor(value) {
+                  return colorScale(value).hex();
+              }
 
-            // Agregar el objeto GeoJSON al mapa existente
-            geojson.addTo(map);
-          },
+              // Crear una capa de mapa de calor de Leaflet
+              var heatLayer = L.heatLayer(heatPoints, {
+                  radius: 25, // Tamaño del radio del punto de calor
+                  minOpacity: 0.5, // Opacidad mínima
+                  gradient: getColor // Usar la función getColor para asignar colores
+              });
+
+              // Agregar la capa de mapa de calor al mapa existente
+              heatLayer.addTo(map);
+                
+          },  
         });
       });
     </script>

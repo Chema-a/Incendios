@@ -15,6 +15,7 @@ from time import sleep
 from gevent.pywsgi import WSGIServer
 import asyncio
 import aiohttp
+import json
 
 global intersected_n
 app = Flask(__name__)
@@ -351,18 +352,24 @@ async def fetch_weather_data(session, url, params):
 
 @app.route('/kauil/load_DataAndShowSpreadRate')
 async def load_DataAndShowSpreadRate():
-    intersected = get_intersected_data()
-    intersected['I'] = await getWeatherDataAsync(intersected)
-    intersected['I']  = intersected['I'].astype(float)
-    # Enviar los datos como respuesta JSON
-    print(intersected['I'])
-    return jsonify({'I': intersected['I'].tolist()})
+    # intersected = get_intersected_data()
+    # feature_collection = await getWeatherDataAsync(intersected)
+    # print(feature_collection)
+        # Define el nombre del archivo JSON
+    json_filename = 'feature_collection.json'
+    
+    # Lee el contenido del archivo JSON
+    with open(json_filename, 'r') as json_file:
+        feature_collection = json.load(json_file)
+    return jsonify(feature_collection)
 
 async def getWeatherDataAsync(intersected):
     async with aiohttp.ClientSession() as session:
         ee.Initialize()
         tasks = []
         coordenadas = []
+        fuel_depth=[]
+        fuelload = []
             # Establecer los parámetros de la consulta
         fecha_inicio = '2023-01-01'
         fecha_fin = '2023-12-31'
@@ -380,6 +387,39 @@ async def getWeatherDataAsync(intersected):
 
             region = ee.Geometry.Point(coordenadas[i])
             roi = ee.Geometry.Point(coordenadas[i])
+            imagen = coleccion.select('NDVI').mean().clip(region)
+
+            # Obtener una región de interés como una imagen en forma de píxeles
+            datos_imagen = imagen.reduceRegion(reducer=ee.Reducer.mean(), geometry=region, scale=20)
+
+            # Obtener el valor promedio del NDVI en la región de interés
+            valor_ndvi = datos_imagen.get('NDVI')
+            
+            
+            # Extraer el valor del NDVI
+            valor_ndvi = ee.Number(valor_ndvi)
+
+            # Estimar la masa de vegetación en lb/ft^2
+            slope_ = 0.5  # Pendiente de la relación lineal
+            intercept = 0.2  # Término de intercepción de la relación lineal
+
+            vegetation_mass = valor_ndvi.multiply(slope_).add(intercept)            
+
+            fuelload.append(vegetation_mass.getInfo())
+            
+            
+            # Calculate the mean tree cover within the region of interest
+            treeCover_mean = treeCover.reduceRegion(ee.Reducer.mean(), roi, 30)
+
+            # Get the tree cover value
+            treeCoverValue = ee.Number(treeCover_mean.get('treecover2000'))
+
+            # Convert tree cover from percentage to feet
+            conversion_factor = 43.560  # 1 acre = 43,560 square feet
+            treeCoverValue_feet = treeCoverValue.multiply(conversion_factor)
+            
+
+            fuel_depth.append(treeCoverValue_feet.getInfo())
             params = {
                 "lat": y_centrum,
                 "lon": x_centrum,
@@ -390,61 +430,18 @@ async def getWeatherDataAsync(intersected):
             url = "https://api.openweathermap.org/data/2.5/weather"
             task = fetch_weather_data(session, url, params)
             tasks.append(task)
-
+        print(fuel_depth, fuelload)
         weather_data = await asyncio.gather(*tasks)
         wind_speed = []
-        fuel_depth=[]
         temp = []
         slope = []
         fuel_moisture = []
-        fuelload = []
-        index = 1
         for data in weather_data:
             if data is not None:
-                index = index +1
-                print(f"Coordenadas del cuadrante {index}")
     # Extraer la velocidad del viento
                 wind_speed.append(data["wind"]["speed"])
                 temp.append(data["main"]["temp"])
                 # return 'ENTRA'
-
-                imagen = coleccion.select('NDVI').mean().clip(region)
-
-                # Obtener una región de interés como una imagen en forma de píxeles
-                datos_imagen = imagen.reduceRegion(reducer=ee.Reducer.mean(), geometry=region, scale=20)
-
-            
-            # Obtener el valor promedio del NDVI en la región de interés
-                valor_ndvi = datos_imagen.get('NDVI')
-
-
-    # FUELLOAD
-                # Extraer el valor del NDVI
-                valor_ndvi = ee.Number(valor_ndvi)
-
-                # Estimar la masa de vegetación en lb/ft^2
-                slope_ = 0.5  # Pendiente de la relación lineal
-                intercept = 0.2  # Término de intercepción de la relación lineal
-
-                # Añadir valores de la masa de vegetacion a la lista
-                vegetation_mass = valor_ndvi.multiply(slope_).add(intercept)
-                fuelload.append(vegetation_mass.getInfo())
-
-                
-    # FUELDEPTH
-                # Calculate the mean tree cover within the region of interest
-                treeCover_mean = treeCover.reduceRegion(ee.Reducer.mean(), roi, 30)
-
-                # Get the tree cover value
-                treeCoverValue = ee.Number(treeCover_mean.get('treecover2000'))
-
-                # Convert tree cover from percentage to feet
-                conversion_factor = 43.560  # 1 acre = 43,560 square feet
-                treeCoverValue_feet = treeCoverValue.multiply(conversion_factor)
-
-                # Añadir valores del fuel depth a la lista
-                fuel_depth.append(treeCoverValue_feet.getInfo())
-
     # SLOPE
                 # Extraer la altitud y la presión atmosférica para calcular la pendiente de la respuesta JSON
                 altitude = None
@@ -471,7 +468,8 @@ async def getWeatherDataAsync(intersected):
         heat_points = [(-103.5306,20.7154), (-103.5487,20.7034), (-103.5388,20.7049), (-103.5413,20.6959), (-103.5314,20.6974) ,(-103.5217,20.6988) ,(-103.5298, 20.6883), (-103.52, 20.6898 )]  # Agrega las coordenadas de los puntos de calor aquí
         # Calcular el índice de propagación del fuego para los puntos de calor de referencia
         I = []
-
+        # Create a list of Features
+        features = []
         for i, row in intersected.iterrows():
             fuelload_val = fuelload[i]
             fuel_depth_val = fuel_depth[i]
@@ -498,11 +496,25 @@ async def getWeatherDataAsync(intersected):
                 point_indices.append(GetSimpleFireSpread(fuelload_val, fuel_depth_val, wind_speed_val, slope_val, fuel_moisture_val, fuelsav)[0] * 1)
             # Calcular el índice de propagación del fuego para el cuadrante actual
             I_val = sum(point_indices)
-            I.append(I_val)
-            print(I)
-        # Resto del procesamiento de datos aquí...
+            I_val = float(I_val)
+            # Create a GeoJSON Feature for each point
+            feature = {
+                "type": "Feature",
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [row.geometry.centroid.x, row.geometry.centroid.y]
+                },
+                "properties": {
+                    "I": I_val  # Replace with your calculated 'I' value
+                }
+            }
+            features.append(feature)
 
-    return str(I)
+    feature_collection = {
+                "type": "FeatureCollection",
+                "features": features
+            }
+    return feature_collection
     
 
 if __name__ == '__main__':
