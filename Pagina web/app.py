@@ -16,12 +16,26 @@ from gevent.pywsgi import WSGIServer
 import asyncio
 import aiohttp
 import json
+import nasa_wildfires as fires
 
 global intersected_n
 app = Flask(__name__)
 mpmath.mp.dps = 60
 coordinatesPrimavera = [[-103.6858, 20.7269],[-103.4552,20.5430]]
-
+heat_points = []
+# Download a regional GeoJSON of hotspots detected by the MODIS satellite in a recent 7-day period.
+def WildfireHotspots():
+    data = fires.get_modis(region="central-america", time_range="7d")  
+    lat = []
+    lon = []
+    # Detectar los incendios en el rango de 7 días dentro del rango de la primavera
+    for i in range(len(data["features"])):
+        if data["features"][i]["geometry"]["coordinates"][0] >= coordinatesPrimavera[0][0] and data["features"][i]["geometry"]["coordinates"][0] <= coordinatesPrimavera[1][0] and data["features"][i]["geometry"]["coordinates"][1] <= coordinatesPrimavera[0][1] and data["features"][i]["geometry"]["coordinates"][1] >= coordinatesPrimavera[1][1]:
+            lon.append(data["features"][i]["geometry"]["coordinates"][0])
+            lat.append(data["features"][i]["geometry"]["coordinates"][1])
+    
+    heat_points = zip(lon, lat)  # Unificar las coordenadas en tuplas (x, y)
+    return heat_points
 # Función para cargar el shapefile
 def load_shapefile(file_path):
     try:
@@ -333,9 +347,10 @@ def load_wildfires():
         gdf = load_shapefile('Primavera.shp')
         heat_points = []
         # heat_points.append(WildfireHotspots())
-        heat_points = [(-103.5306,20.7154), (-103.5487,20.7034), (-103.5388,20.7049), (-103.5413,20.6959), (-103.5314,20.6974) ,(-103.5217,20.6988) ,(-103.5298, 20.6883), (-103.52, 20.6898 )]  # Agrega las coordenadas de los puntos de calor aquí
+        heat_points = [(-103.47079999999988,20.598000000000006)]  # Agrega las coordenadas de los puntos de calor aquí
         # Download a regional GeoJSON of hotspots detected by the MODIS satellite in a recent 7-day period.
-# Devuelve los datos de coordenadas como JSON
+        # Devuelve los datos de coordenadas como JSON
+        print(heat_points)
         return jsonify(heat_points)
 
     except Exception as e:
@@ -352,15 +367,15 @@ async def fetch_weather_data(session, url, params):
 
 @app.route('/kauil/load_DataAndShowSpreadRate')
 async def load_DataAndShowSpreadRate():
-    # intersected = get_intersected_data()
-    # feature_collection = await getWeatherDataAsync(intersected)
+    intersected = get_intersected_data()
+    feature_collection = await getWeatherDataAsync(intersected)
     # print(feature_collection)
         # Define el nombre del archivo JSON
-    json_filename = 'feature_collection.json'
+    # json_filename = 'feature_collection.json'
     
-    # Lee el contenido del archivo JSON
-    with open(json_filename, 'r') as json_file:
-        feature_collection = json.load(json_file)
+    # # Lee el contenido del archivo JSON
+    # with open(json_filename, 'r') as json_file:
+    #     feature_collection = json.load(json_file)
     return jsonify(feature_collection)
 
 async def getWeatherDataAsync(intersected):
@@ -430,7 +445,6 @@ async def getWeatherDataAsync(intersected):
             url = "https://api.openweathermap.org/data/2.5/weather"
             task = fetch_weather_data(session, url, params)
             tasks.append(task)
-        print(fuel_depth, fuelload)
         weather_data = await asyncio.gather(*tasks)
         wind_speed = []
         temp = []
@@ -465,9 +479,8 @@ async def getWeatherDataAsync(intersected):
         fuel_depth = replace_zero_with_average(fuel_depth)
         slope = replace_zero_with_average(slope)
         # Coordenadas de los puntos de calor de referencia
-        heat_points = [(-103.5306,20.7154), (-103.5487,20.7034), (-103.5388,20.7049), (-103.5413,20.6959), (-103.5314,20.6974) ,(-103.5217,20.6988) ,(-103.5298, 20.6883), (-103.52, 20.6898 )]  # Agrega las coordenadas de los puntos de calor aquí
-        # Calcular el índice de propagación del fuego para los puntos de calor de referencia
-        I = []
+        # heat_points = [(-103.5306,20.7154), (-103.5487,20.7034), (-103.5388,20.7049), (-103.5413,20.6959), (-103.5314,20.6974) ,(-103.5217,20.6988) ,(-103.5298, 20.6883), (-103.52, 20.6898 )]  # Agrega las coordenadas de los puntos de calor aquí
+
         # Create a list of Features
         features = []
         for i, row in intersected.iterrows():

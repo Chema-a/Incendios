@@ -90,7 +90,6 @@
       });
 
       loadDataAndShowPredictionsButton.addEventListener("click", function () {
-        CleanMap();
         loading();
         $.ajax({
           url: "/kauil/load_DataAndShowSpreadRate",
@@ -102,46 +101,43 @@
             content_loaded(); // Ocultar el loader cuando la solicitud se completa
           },
           success: function (response) {
-              // Obtener los datos de propagación de la respuesta JSON
-              var propagationData = response.features;
+              
+// Obtén los valores mínimo y máximo del índice de propagación desde 'response'
+var minIntensity = Number.MAX_VALUE;
+var maxIntensity = Number.MIN_VALUE;
 
-              // Crear un arreglo de puntos de calor (latitud, longitud, intensidad)
-              var heatPoints = [];
-              propagationData.forEach(function (feature) {
-                  var coordinates = feature.geometry.coordinates;
-                  var intensity = feature.properties.I;
-                  heatPoints.push([coordinates[1], coordinates[0], intensity]);
-              });
+response.features.forEach(function (feature) {
+    var intensity = feature.properties.I;
+    minIntensity = Math.min(minIntensity, intensity);
+    maxIntensity = Math.max(maxIntensity, intensity);
+});
 
-              // Obtén los valores mínimo y máximo del índice de propagación
-              var minValue = Math.min.apply(Math, heatPoints.map(function (point) {
-                  return point[2];
-              }));
-              var maxValue = Math.max.apply(Math, heatPoints.map(function (point) {
-                return point[2];
-              }));
-              console.log(minValue, maxValue);
+// Define los colores que deseas usar en el gradiente
+var colors = ['green', 'yellow', 'orange', 'red'];
 
-              // Define los colores que deseas usar en el gradiente
-              var colors = ['green', 'yellow', 'orange', 'red'];
+// Crea una escala de colores personalizada utilizando chroma.js
+var colorScale = chroma.scale(colors).domain([minIntensity, maxIntensity]);
 
-              // Crea una escala de colores personalizada utilizando chroma.js
-              var colorScale = chroma.scale(colors).domain([minValue, maxValue]);
+// Crea una función para asignar colores en función del valor del índice de propagación
+function getColor(intensity) {
+    return colorScale(intensity).hex();
+}
 
-              // Función para asignar colores en función del valor del índice de propagación
-              function getColor(value) {
-                  return colorScale(value).hex();
-              }
+// Recorre los features y agrega un círculo en cada ubicación con el color correspondiente
+response.features.forEach(function (feature) {
+    var coordinates = feature.geometry.coordinates;
+    var intensity = feature.properties.I;
+    var color = getColor(intensity);
 
-              // Crear una capa de mapa de calor de Leaflet
-              var heatLayer = L.heatLayer(heatPoints, {
-                  radius: 25, // Tamaño del radio del punto de calor
-                  minOpacity: 0.5, // Opacidad mínima
-                  gradient: getColor // Usar la función getColor para asignar colores
-              });
-
-              // Agregar la capa de mapa de calor al mapa existente
-              heatLayer.addTo(map);
+    // Crea un círculo en la ubicación con el color y radio adecuados
+    L.circle([coordinates[1], coordinates[0]], {
+        color: 'black',
+        weight: 1,
+        fillColor: color,
+        fillOpacity: 0.7,
+        radius: 400  // Ajusta el radio según tus necesidades
+    }).addTo(map);  // Asume que 'map' es tu objeto Leaflet
+});
                 
           },  
         });
