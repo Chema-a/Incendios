@@ -22,7 +22,6 @@ global intersected_n
 app = Flask(__name__)
 mpmath.mp.dps = 60
 coordinatesPrimavera = [[-103.6858, 20.7269],[-103.4552,20.5430]]
-heat_points = []
 # Download a regional GeoJSON of hotspots detected by the MODIS satellite in a recent 7-day period.
 def WildfireHotspots():
     data = fires.get_modis(region="central-america", time_range="7d")  
@@ -34,7 +33,7 @@ def WildfireHotspots():
             lon.append(data["features"][i]["geometry"]["coordinates"][0])
             lat.append(data["features"][i]["geometry"]["coordinates"][1])
     
-    heat_points = zip(lon, lat)  # Unificar las coordenadas en tuplas (x, y)
+    heat_points = list(zip(lon, lat))  # Unificar las coordenadas en tuplas (x, y)
     return heat_points
 # Función para cargar el shapefile
 def load_shapefile(file_path):
@@ -89,163 +88,6 @@ def get_intersected_data():
     intersected = gpd.overlay(gdf, grid, how='intersection')
 
     return intersected
-
-def getWeatherData(intersected):
-    ee.Initialize()
-    wind_speed = []
-    fuel_depth=[]
-    temp = []
-    slope = []
-    fuel_moisture = []
-    fuelload = []
-    coordenadas = []
-    # Definir la URL de la API de OpenWeatherMap y los parámetros de consulta
-    url = "https://api.openweathermap.org/data/2.5/weather"
-
-    # Establecer los parámetros de la consulta
-    fecha_inicio = '2023-01-01'
-    fecha_fin = '2023-12-31'
-
-    # Consulta de datos de vegetación
-    coleccion = ee.ImageCollection('MODIS/006/MOD13A2').filterDate(fecha_inicio, fecha_fin)
-
-    # Load the Global Forest Change dataset
-    dataset = ee.Image('UMD/hansen/global_forest_change_2019_v1_7')
-
-    # Select the tree cover band
-    treeCover = dataset.select('treecover2000')
-
-    # Iterar sobre los registros
-    for i, row in intersected.iterrows():
-
-        y_centrum, x_centrum = row.geometry.centroid.y, row.geometry.centroid.x
-        coordenadas.append([x_centrum, y_centrum])
-
-        print(f"Coordenadas del cuadrante {i}: {x_centrum},{y_centrum}")
-
-        region = ee.Geometry.Point(coordenadas[i])
-       # Define your region of interest (e.g., a point or a geometry) 
-        roi = ee.Geometry.Point(coordenadas[i])
-
-        params = {
-            "lat": y_centrum,  # Latitud
-            "lon": x_centrum,  # Longitud
-            "appid": "88ea1e1a48e480178b9c4ab177c2475f",  # Tu ID de API de OpenWeatherMap
-            "units": "metric"  # Unidades métricas (para obtener la velocidad del viento en m/s)
-        }
-
-        # response = requests.get(url, timeout=10) 
-        # Hacer una solicitud HTTP a la API y obtener la respuesta JSON
-        try:
-            response = requests.get(url, params=params,timeout=20)
-        except:
-            sleep(1.5)
-            continue
-            # return "La solicitud se agotó"
-        if response.status_code == 200:
-            data = response.json()
-            
-# WIND SPEED
-
-            # Extraer la velocidad del viento
-            wind_speed.append(data["wind"]["speed"])
-            temp.append(data["main"]["temp"])
-            # return 'ENTRA'
-
-            imagen = coleccion.select('NDVI').mean().clip(region)
-
-            # Obtener una región de interés como una imagen en forma de píxeles
-            datos_imagen = imagen.reduceRegion(reducer=ee.Reducer.mean(), geometry=region, scale=20)
-
-         
-           # Obtener el valor promedio del NDVI en la región de interés
-            valor_ndvi = datos_imagen.get('NDVI')
-
-
-# FUELLOAD
-            # Extraer el valor del NDVI
-            valor_ndvi = ee.Number(valor_ndvi)
-
-            # Estimar la masa de vegetación en lb/ft^2
-            slope_ = 0.5  # Pendiente de la relación lineal
-            intercept = 0.2  # Término de intercepción de la relación lineal
-
-            # Añadir valores de la masa de vegetacion a la lista
-            vegetation_mass = valor_ndvi.multiply(slope_).add(intercept)
-            fuelload.append(vegetation_mass.getInfo())
-
-            
-# FUELDEPTH
-            # Calculate the mean tree cover within the region of interest
-            treeCover_mean = treeCover.reduceRegion(ee.Reducer.mean(), roi, 30)
-
-            # Get the tree cover value
-            treeCoverValue = ee.Number(treeCover_mean.get('treecover2000'))
-
-            # Convert tree cover from percentage to feet
-            conversion_factor = 43.560  # 1 acre = 43,560 square feet
-            treeCoverValue_feet = treeCoverValue.multiply(conversion_factor)
-
-            # Añadir valores del fuel depth a la lista
-            fuel_depth.append(treeCoverValue_feet.getInfo())
-
-# SLOPE
-            # Extraer la altitud y la presión atmosférica para calcular la pendiente de la respuesta JSON
-            altitude = None
-            atmospheric_pressure = data["main"]["pressure"]  # En hPa
-            try:
-                altitude = data["main"]["sea_level"]  # En metros
-                slope.append(0.102 * altitude / atmospheric_pressure)  # En grados
-            except KeyError:
-                slope.append(0)
-
-# FUEL MOISTURE
-            # Calcular la humedad de combustible utilizando la fórmula de Deeming
-            temp_calculate = data["main"]["temp"] - 273.15  # Convertir de Kelvin a Celsius
-            relative_moisture = data["main"]["humidity"]
-            precipitation = data.get("rain", {}).get("1h", 0)  # Obtener la precipitación de los últimos 60 minutos (si está disponible)
-            wind_speed_calculate = data["wind"]["speed"]
-
-            fuel_moisture.append(20 + 280 / (temp_calculate + 273) - relative_moisture + 0.1 * wind_speed_calculate + 0.2 * precipitation)
-        else:
-            return 'La solicitud falló con el código de estado:', response.status_code
-
-
-    fuel_depth = replace_zero_with_average(fuel_depth)
-    # Calcular el índice de propagación del fuego para los puntos de calor de referencia
-    heat_points = []
-    I = []
-    # pdb.set_trace()
-    for i, row in intersected.iterrows():
-        fuelload_val = fuelload[i]
-        fuel_depth_val = fuel_depth[i]
-        fuelsav = 3500
-        slope_val = slope[i] # Pendiente en grados
-        wind_speed_val = wind_speed[i] * 2.237 # Velocidad del viento en m/s
-        temperature_val = temp[i]
-        fuel_moisture_val = fuel_moisture[i] / 1000 # Humedad de combustible
-        
-        # Calcular el índice de propagación del fuego para cada punto de calor de referencia
-        point_indices = []
-        if heat_points:
-            for heat_point in heat_points:
-                heat_x, heat_y = heat_point
-                distance_to_heat = math.sqrt((row.geometry.centroid.x - heat_x)**2 + (row.geometry.centroid.y - heat_y)**2)
-                # Calcular la influencia basada en la intensidad del fuego en los heat points (puedes ajustar el factor)
-                fire_intensity = 100  # Aquí puedes usar la intensidad real del fuego en el punto de calor
-                if distance_to_heat != 0:
-                    influence_factor = fire_intensity / distance_to_heat
-                else:
-                    pass
-                point_indices.append(GetSimpleFireSpread(fuelload_val, fuel_depth_val, wind_speed_val, slope_val, fuel_moisture_val, fuelsav)[0] * influence_factor)
-        else:
-            point_indices.append(GetSimpleFireSpread(fuelload_val, fuel_depth_val, wind_speed_val, slope_val, fuel_moisture_val, fuelsav)[0] * 1)
-        # Calcular el índice de propagación del fuego para el cuadrante actual
-        I_val = sum(point_indices)
-        I.append(I_val)
-    
-    return str(I)
-    
 
 def replace_zero_with_average(arr):
     # Calcula el promedio de todos los registros del arreglo
@@ -345,9 +187,9 @@ def load_wildfires():
     try:
         # Carga del shapefile
         gdf = load_shapefile('Primavera.shp')
-        heat_points = []
+        heat_points = WildfireHotspots()
         # heat_points.append(WildfireHotspots())
-        heat_points = [(-103.47079999999988,20.598000000000006)]  # Agrega las coordenadas de los puntos de calor aquí
+        # heat_points = [(-103.47079999999988,20.598000000000006)]  # Agrega las coordenadas de los puntos de calor aquí
         # Download a regional GeoJSON of hotspots detected by the MODIS satellite in a recent 7-day period.
         # Devuelve los datos de coordenadas como JSON
         print(heat_points)
@@ -491,7 +333,7 @@ async def getWeatherDataAsync(intersected):
             wind_speed_val = wind_speed[i] * 2.237 # Velocidad del viento en m/s
             temperature_val = temp[i]
             fuel_moisture_val = fuel_moisture[i] / 1000 # Humedad de combustible
-            
+            heat_points = WildfireHotspots()
             # Calcular el índice de propagación del fuego para cada punto de calor de referencia
             point_indices = []
             if heat_points:
