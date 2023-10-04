@@ -1,4 +1,4 @@
-from flask import Flask, render_template,jsonify
+from flask import Flask, render_template,jsonify, request
 import geopandas as gpd
 from shapely.geometry import Polygon, Point
 from shapely.ops import nearest_points
@@ -15,23 +15,34 @@ import json
 import nasa_wildfires as fires
 from sklearn.linear_model import LinearRegression
 
+
 global intersected_n
 app = Flask(__name__)
 mpmath.mp.dps = 60
 coordinatesPrimavera = [[-103.6858, 20.7269],[-103.4552,20.5430]]
 # Download a regional GeoJSON of hotspots detected by the MODIS satellite in a recent 7-day period.
-def WildfireHotspots():
-    # data = fires.get_modis(region="central-america", time_range="7d")  
-    # lat = []
-    # lon = []
-    # # Detectar los incendios en el rango de 7 días dentro del rango de la primavera
-    # for i in range(len(data["features"])):
-    #     if data["features"][i]["geometry"]["coordinates"][0] >= coordinatesPrimavera[0][0] and data["features"][i]["geometry"]["coordinates"][0] <= coordinatesPrimavera[1][0] and data["features"][i]["geometry"]["coordinates"][1] <= coordinatesPrimavera[0][1] and data["features"][i]["geometry"]["coordinates"][1] >= coordinatesPrimavera[1][1]:
-    #         lon.append(data["features"][i]["geometry"]["coordinates"][0])
-    #         lat.append(data["features"][i]["geometry"]["coordinates"][1])
-    
-    # heat_points = list(zip(lon, lat))  # Unificar las coordenadas en tuplas (x, y)
-    heat_points = [(-103.5306,20.7154), (-103.5487,20.7034), (-103.5388,20.7049), (-103.5413,20.6959), (-103.5314,20.6974) ,(-103.5217,20.6988) ,(-103.5298, 20.6883), (-103.52, 20.6898 )]
+def WildfireHotspots(wildfire_dataset):
+    heat_points = []
+    if wildfire_dataset == 0:
+        data = fires.get_modis(region="central-america", time_range="7d")  
+        lat = []
+        lon = []
+        # Detectar los incendios en el rango de 7 días dentro del rango de la primavera
+        for i in range(len(data["features"])):
+            if data["features"][i]["geometry"]["coordinates"][0] >= coordinatesPrimavera[0][0] and data["features"][i]["geometry"]["coordinates"][0] <= coordinatesPrimavera[1][0] and data["features"][i]["geometry"]["coordinates"][1] <= coordinatesPrimavera[0][1] and data["features"][i]["geometry"]["coordinates"][1] >= coordinatesPrimavera[1][1]:
+                lon.append(data["features"][i]["geometry"]["coordinates"][0])
+                lat.append(data["features"][i]["geometry"]["coordinates"][1])
+        
+        heat_points = list(zip(lon, lat))  # Unificar las coordenadas en tuplas (x, y)
+    elif wildfire_dataset == 1:
+         heat_points = [(-103.6294, 20.6814),(-103.6174, 20.6829),(-103.6086, 20.7456)]
+    elif wildfire_dataset == 2:
+         heat_points = [(-103.4979, 20.5511),(-103.4856, 20.5426),(-103.4753,20.5439)]
+    elif wildfire_dataset == 3:
+        heat_points = [(-103.5316,20.6642),(-103.5452, 20.687),(-103.5367,20.6726)]
+
+    print(heat_points, wildfire_dataset)
+    # heat_points = [(-103.5306,20.7154), (-103.5487,20.7034), (-103.5388,20.7049), (-103.5413,20.6959), (-103.5314,20.6974) ,(-103.5217,20.6988) ,(-103.5298, 20.6883), (-103.52, 20.6898 )]
     return heat_points
 # Función para cargar el shapefile
 def load_shapefile(file_path):
@@ -180,15 +191,11 @@ def index():
 
 @app.route('/kauil/load_wildfires')
 def load_wildfires():
-    # return 'TODO VERDE'
+    wildfire_dataset = request.args.get('wildfire_dataset')
     try:
         # Carga del shapefile
         gdf = load_shapefile('Primavera.shp')
-        heat_points = WildfireHotspots()
-        # heat_points = [(-103.5306,20.7154), (-103.5487,20.7034), (-103.5388,20.7049), (-103.5413,20.6959), (-103.5314,20.6974) ,(-103.5217,20.6988) ,(-103.5298, 20.6883), (-103.52, 20.6898 )]
-        # heat_points.append(WildfireHotspots())
-        # heat_points = [(-103.47079999999988,20.598000000000006)]  # Agrega las coordenadas de los puntos de calor aquí
-        # Download a regional GeoJSON of hotspots detected by the MODIS satellite in a recent 7-day period.
+        heat_points = WildfireHotspots(int(wildfire_dataset))
         # Devuelve los datos de coordenadas como JSON
         return jsonify(heat_points)
 
@@ -207,7 +214,9 @@ async def fetch_weather_data(session, url, params):
 @app.route('/kauil/load_DataAndShowSpreadRate')
 async def load_DataAndShowSpreadRate():
     intersected = get_intersected_data()
-    feature_collection = await getWeatherDataAsync(intersected)
+    wildfire_dataset = request.args.get('wildfire_dataset')
+    print(wildfire_dataset)
+    feature_collection = await getWeatherDataAsync(intersected, wildfire_dataset)
         # Define el nombre del archivo JSON
     # json_filename = 'feature_collection.json'
     
@@ -216,9 +225,11 @@ async def load_DataAndShowSpreadRate():
     #     feature_collection = json.load(json_file)
     return jsonify(feature_collection)
 
-async def getWeatherDataAsync(intersected):
+async def getWeatherDataAsync(intersected, wildfire_dataset):
     async with aiohttp.ClientSession() as session:
+
         ee.Initialize()
+
         tasks = []
         coordenadas = []
         fuel_depth=[]
@@ -305,8 +316,9 @@ async def getWeatherDataAsync(intersected):
         wind_speed= replace_zero_with_average(wind_speed)
 
         # Create a list of Features
+        print("Dataset:"+wildfire_dataset)
         features = []
-        heat_points = WildfireHotspots()
+        heat_points = WildfireHotspots(int(wildfire_dataset))
         for i, row in intersected.iterrows():
 
             fuelload_val = fuelload[i]
@@ -361,22 +373,41 @@ async def getWeatherDataAsync(intersected):
 
     feature_collection = {
                 "type": "FeatureCollection",
-                "features": features
+                "features": features,
             }
     return feature_collection
     
 @app.route('/kauil/predict')
 def Predict():
-    horas_heat_points = np.array([507,607,707,807,907,1007,1107,1207]) # horas
+    wildfire_dataset = request.args.get('wildfire_dataset')
+    wildfire_dataset = int(wildfire_dataset)
+    heat_points = []
+    horas_heat_points = np.array([507, 607, 707 ])
 
-    longitud_heat_point = np.array([-103.5306,-103.5487,-103.5388,-103.5413,-103.5314,-103.5217,-103.5298,-103.52 ]) # longitud
+    if wildfire_dataset == 1:
+        latitud_heat_point = np.array([20.6814, 20.6829 ])
+        longitud_heat_point = np.array([-103.6294,-103.6174])
+        horas_heat_points = np.array([507, 607 ])
 
-    latitud_heat_point = np.array([20.7154,20.7034,20.7049,20.6959,20.6974,20.6988,20.6883,20.6898]) # latitud
+    elif wildfire_dataset == 2:
+        latitud_heat_point = np.array([20.5426, 20.5439, 20.5511 ])
+        longitud_heat_point = np.array([-103.4856, -103.4753, -103.4979 ])
+    elif wildfire_dataset == 3:
+        latitud_heat_point = np.array([20.6878 , 20.6749, 20.6404 ])
+        longitud_heat_point = np.array([-103.5722 , -103.556,-103.5571 ])
+        
 
-    hora1 = np.array([1607])
-    hora2 = np.array([1907])
-    hora3 = np.array([2207])
 
+    # horas_heat_points = np.array([507,607,707,807,907,1007,1107,1207]) # horas
+
+    # longitud_heat_point = np.array([-103.5306,-103.5487,-103.5388,-103.5413,-103.5314,-103.5217,-103.5298,-103.52 ]) # longitud
+
+    # latitud_heat_point = np.array([20.7154,20.7034,20.7049,20.6959,20.6974,20.6988,20.6883,20.6898]) # latitud
+
+    hora1 = np.array([907])
+    hora2 = np.array([1107])
+    hora3 = np.array([1507])
+    print(horas_heat_points,  longitud_heat_point, latitud_heat_point)
     horas = []
     horas.insert(len(horas),hora1)
     horas.insert(len(horas),hora2)
@@ -387,6 +418,7 @@ def Predict():
         prediction.append([prediction_y , prediction_x])
         np.append(longitud_heat_point, prediction_x)
         np.append(latitud_heat_point, prediction_y)
+    print(prediction)
     return jsonify(prediction)
 
 def regresion_lineal(nueva_hora, horas_heat_points, longitud_heat_point, latitud_heat_point):
