@@ -1,5 +1,4 @@
 from flask import Flask, render_template,jsonify
-import folium
 import geopandas as gpd
 from shapely.geometry import Polygon, Point
 from shapely.ops import nearest_points
@@ -7,16 +6,14 @@ import numpy as np
 import math
 import mpmath
 import ee
-import requests
-import folium
 import branca.colormap as cm
-import pdb
 from time import sleep
 from gevent.pywsgi import WSGIServer
 import asyncio
 import aiohttp
 import json
 import nasa_wildfires as fires
+from sklearn.linear_model import LinearRegression
 
 global intersected_n
 app = Flask(__name__)
@@ -24,16 +21,17 @@ mpmath.mp.dps = 60
 coordinatesPrimavera = [[-103.6858, 20.7269],[-103.4552,20.5430]]
 # Download a regional GeoJSON of hotspots detected by the MODIS satellite in a recent 7-day period.
 def WildfireHotspots():
-    data = fires.get_modis(region="central-america", time_range="7d")  
-    lat = []
-    lon = []
-    # Detectar los incendios en el rango de 7 días dentro del rango de la primavera
-    for i in range(len(data["features"])):
-        if data["features"][i]["geometry"]["coordinates"][0] >= coordinatesPrimavera[0][0] and data["features"][i]["geometry"]["coordinates"][0] <= coordinatesPrimavera[1][0] and data["features"][i]["geometry"]["coordinates"][1] <= coordinatesPrimavera[0][1] and data["features"][i]["geometry"]["coordinates"][1] >= coordinatesPrimavera[1][1]:
-            lon.append(data["features"][i]["geometry"]["coordinates"][0])
-            lat.append(data["features"][i]["geometry"]["coordinates"][1])
+    # data = fires.get_modis(region="central-america", time_range="7d")  
+    # lat = []
+    # lon = []
+    # # Detectar los incendios en el rango de 7 días dentro del rango de la primavera
+    # for i in range(len(data["features"])):
+    #     if data["features"][i]["geometry"]["coordinates"][0] >= coordinatesPrimavera[0][0] and data["features"][i]["geometry"]["coordinates"][0] <= coordinatesPrimavera[1][0] and data["features"][i]["geometry"]["coordinates"][1] <= coordinatesPrimavera[0][1] and data["features"][i]["geometry"]["coordinates"][1] >= coordinatesPrimavera[1][1]:
+    #         lon.append(data["features"][i]["geometry"]["coordinates"][0])
+    #         lat.append(data["features"][i]["geometry"]["coordinates"][1])
     
-    heat_points = list(zip(lon, lat))  # Unificar las coordenadas en tuplas (x, y)
+    # heat_points = list(zip(lon, lat))  # Unificar las coordenadas en tuplas (x, y)
+    heat_points = [(-103.5306,20.7154), (-103.5487,20.7034), (-103.5388,20.7049), (-103.5413,20.6959), (-103.5314,20.6974) ,(-103.5217,20.6988) ,(-103.5298, 20.6883), (-103.52, 20.6898 )]
     return heat_points
 # Función para cargar el shapefile
 def load_shapefile(file_path):
@@ -68,7 +66,7 @@ def get_intersected_data():
         # Definición de la cuadrícula
     xmin, ymin, xmax, ymax = -103.6858, 20.5430, -103.4552, 20.7269
 
-    grid_size = 0.01
+    grid_size = 0.03
     cols = list(np.arange(xmin, xmax, grid_size))
     rows = list(np.arange(ymin, ymax, grid_size))  
 
@@ -176,7 +174,6 @@ def GetSimpleFireSpread(fuelload, fueldepth, windspeed, slope, fuelmoisture, fue
     else:
         return (maxval, maxval, maxval)
 
-
 @app.route('/kauil')
 def index():
     return render_template('index.html')
@@ -188,11 +185,11 @@ def load_wildfires():
         # Carga del shapefile
         gdf = load_shapefile('Primavera.shp')
         heat_points = WildfireHotspots()
+        # heat_points = [(-103.5306,20.7154), (-103.5487,20.7034), (-103.5388,20.7049), (-103.5413,20.6959), (-103.5314,20.6974) ,(-103.5217,20.6988) ,(-103.5298, 20.6883), (-103.52, 20.6898 )]
         # heat_points.append(WildfireHotspots())
         # heat_points = [(-103.47079999999988,20.598000000000006)]  # Agrega las coordenadas de los puntos de calor aquí
         # Download a regional GeoJSON of hotspots detected by the MODIS satellite in a recent 7-day period.
         # Devuelve los datos de coordenadas como JSON
-        print(heat_points)
         return jsonify(heat_points)
 
     except Exception as e:
@@ -211,11 +208,10 @@ async def fetch_weather_data(session, url, params):
 async def load_DataAndShowSpreadRate():
     intersected = get_intersected_data()
     feature_collection = await getWeatherDataAsync(intersected)
-    # print(feature_collection)
         # Define el nombre del archivo JSON
     # json_filename = 'feature_collection.json'
     
-    # # Lee el contenido del archivo JSON
+    # Lee el contenido del archivo JSON
     # with open(json_filename, 'r') as json_file:
     #     feature_collection = json.load(json_file)
     return jsonify(feature_collection)
@@ -241,42 +237,29 @@ async def getWeatherDataAsync(intersected):
         for i, row in intersected.iterrows():
             y_centrum, x_centrum = row.geometry.centroid.y, row.geometry.centroid.x
             coordenadas.append([x_centrum, y_centrum])
-
             region = ee.Geometry.Point(coordenadas[i])
             roi = ee.Geometry.Point(coordenadas[i])
             imagen = coleccion.select('NDVI').mean().clip(region)
-
             # Obtener una región de interés como una imagen en forma de píxeles
             datos_imagen = imagen.reduceRegion(reducer=ee.Reducer.mean(), geometry=region, scale=20)
-
             # Obtener el valor promedio del NDVI en la región de interés
             valor_ndvi = datos_imagen.get('NDVI')
-            
-            
             # Extraer el valor del NDVI
             valor_ndvi = ee.Number(valor_ndvi)
-
             # Estimar la masa de vegetación en lb/ft^2
             slope_ = 0.5  # Pendiente de la relación lineal
             intercept = 0.2  # Término de intercepción de la relación lineal
-
             vegetation_mass = valor_ndvi.multiply(slope_).add(intercept)            
-
             fuelload.append(vegetation_mass.getInfo())
-            
-            
             # Calculate the mean tree cover within the region of interest
             treeCover_mean = treeCover.reduceRegion(ee.Reducer.mean(), roi, 30)
-
             # Get the tree cover value
             treeCoverValue = ee.Number(treeCover_mean.get('treecover2000'))
-
             # Convert tree cover from percentage to feet
             conversion_factor = 43.560  # 1 acre = 43,560 square feet
             treeCoverValue_feet = treeCoverValue.multiply(conversion_factor)
-            
-
             fuel_depth.append(treeCoverValue_feet.getInfo())
+
             params = {
                 "lat": y_centrum,
                 "lon": x_centrum,
@@ -314,26 +297,25 @@ async def getWeatherDataAsync(intersected):
                 relative_moisture = data["main"]["humidity"]
                 precipitation = data.get("rain", {}).get("1h", 0)  # Obtener la precipitación de los últimos 60 minutos (si está disponible)
                 wind_speed_calculate = data["wind"]["speed"]
-
-                fuel_moisture.append(20 + 280 / (temp_calculate + 273) - relative_moisture + 0.1 * wind_speed_calculate + 0.2 * precipitation)
+                fuel_moisture.append(20 + 280 / (temp_calculate + 273) - (relative_moisture / 100) + 0.1 * wind_speed_calculate + 0.2 * precipitation)
             else:
                 print('La solicitud falló con el código de estado:')
         fuel_depth = replace_zero_with_average(fuel_depth)
         slope = replace_zero_with_average(slope)
-        # Coordenadas de los puntos de calor de referencia
-        # heat_points = [(-103.5306,20.7154), (-103.5487,20.7034), (-103.5388,20.7049), (-103.5413,20.6959), (-103.5314,20.6974) ,(-103.5217,20.6988) ,(-103.5298, 20.6883), (-103.52, 20.6898 )]  # Agrega las coordenadas de los puntos de calor aquí
+        wind_speed= replace_zero_with_average(wind_speed)
 
         # Create a list of Features
         features = []
+        heat_points = WildfireHotspots()
         for i, row in intersected.iterrows():
+
             fuelload_val = fuelload[i]
             fuel_depth_val = fuel_depth[i]
             fuelsav = 3500
             slope_val = slope[i] # Pendiente en grados
             wind_speed_val = wind_speed[i] * 2.237 # Velocidad del viento en m/s
             temperature_val = temp[i]
-            fuel_moisture_val = fuel_moisture[i] / 1000 # Humedad de combustible
-            heat_points = WildfireHotspots()
+            fuel_moisture_val = fuel_moisture[i] /1000
             # Calcular el índice de propagación del fuego para cada punto de calor de referencia
             point_indices = []
             if heat_points:
@@ -346,23 +328,35 @@ async def getWeatherDataAsync(intersected):
                         influence_factor = fire_intensity / distance_to_heat
                     else:
                         pass
-                    point_indices.append(GetSimpleFireSpread(fuelload_val, fuel_depth_val, wind_speed_val, slope_val, fuel_moisture_val, fuelsav)[0] * influence_factor)
+                    R, RI,FI = GetSimpleFireSpread(fuelload_val, fuel_depth_val, wind_speed_val, slope_val, fuel_moisture_val, fuelsav)
+                    R = R * influence_factor
             else:
-                point_indices.append(GetSimpleFireSpread(fuelload_val, fuel_depth_val, wind_speed_val, slope_val, fuel_moisture_val, fuelsav)[0] * 1)
-            # Calcular el índice de propagación del fuego para el cuadrante actual
-            I_val = sum(point_indices)
-            I_val = float(I_val)
-            # Create a GeoJSON Feature for each point
+                distance_to_heat = "No hay distancia"
+                R, RI,FI = GetSimpleFireSpread(fuelload_val, fuel_depth_val, wind_speed_val, slope_val, fuel_moisture_val, fuelsav)
+                point_indices.append(R)
+                # Calcular el índice de propagación del fuego para el cuadrante actual
+                I_val = sum(point_indices)
+                I_val = float(I_val)
+
+                # Create a GeoJSON Feature for each point
             feature = {
-                "type": "Feature",
-                "geometry": {
-                    "type": "Point",
-                    "coordinates": [row.geometry.centroid.x, row.geometry.centroid.y]
-                },
-                "properties": {
-                    "I": I_val  # Replace with your calculated 'I' value
+                    "type": "Feature",
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [row.geometry.centroid.x, row.geometry.centroid.y]
+                    },
+                    "properties": {
+                        "I": str(R) ,
+                        "temperature": temperature_val,  # Temperatura atmosférica
+                        "fuel_load": float(fuelload_val),
+                        "fuel_depth": float(fuel_depth_val),
+                        "slope": float(slope_val),
+                        "wind_speed": float(wind_speed_val),
+                        "fuel_moisture" : float(fuel_moisture_val),
+                        "distance_to_heat": distance_to_heat,
+                        "RI": str(RI)
+                    }
                 }
-            }
             features.append(feature)
 
     feature_collection = {
@@ -371,6 +365,48 @@ async def getWeatherDataAsync(intersected):
             }
     return feature_collection
     
+@app.route('/kauil/predict')
+def Predict():
+    horas_heat_points = np.array([507,607,707,807,907,1007,1107,1207]) # horas
+
+    longitud_heat_point = np.array([-103.5306,-103.5487,-103.5388,-103.5413,-103.5314,-103.5217,-103.5298,-103.52 ]) # longitud
+
+    latitud_heat_point = np.array([20.7154,20.7034,20.7049,20.6959,20.6974,20.6988,20.6883,20.6898]) # latitud
+
+    hora1 = np.array([1607])
+    hora2 = np.array([1907])
+    hora3 = np.array([2207])
+
+    horas = []
+    horas.insert(len(horas),hora1)
+    horas.insert(len(horas),hora2)
+    horas.insert(len(horas),hora3)
+    prediction = []
+    for i in horas:
+        prediction_y , prediction_x = regresion_lineal(i, horas_heat_points,  longitud_heat_point, latitud_heat_point)
+        prediction.append([prediction_y , prediction_x])
+        np.append(longitud_heat_point, prediction_x)
+        np.append(latitud_heat_point, prediction_y)
+    return jsonify(prediction)
+
+def regresion_lineal(nueva_hora, horas_heat_points, longitud_heat_point, latitud_heat_point):
+    #Ajusta
+    regresion_lineal = LinearRegression() # creamos una instancia de LinearRegression
+    # instruimos a la regresión lineal que aprenda de los datos (x,y)
+    regresion_lineal.fit(horas_heat_points.reshape(-1,1), longitud_heat_point) 
+
+    # vamos a predecir
+    # nueva_hora = np.array([1600]) 
+    longitud = regresion_lineal.predict(nueva_hora.reshape(-1,1))
+
+    #Ajusta
+    regresion_lineal = LinearRegression() # creamos una instancia de LinearRegression
+
+    regresion_lineal.fit(horas_heat_points.reshape(-1,1), latitud_heat_point) 
+
+    latitud = regresion_lineal.predict(nueva_hora.reshape(-1,1))
+    return latitud[0], longitud[0]   
+
 
 if __name__ == '__main__':
     # http_server = WSGIServer(('', 5000), app)

@@ -6,9 +6,16 @@ body {
     display: flex;
 }
 
+button:disabled {
+    /* Estilos para botones deshabilitados */
+    opacity: 0.5; /* Por ejemplo, puedes reducir la opacidad */
+    cursor: not-allowed; /* Cambiar el cursor */
+}
+
+
 /* Estilos para el contenedor de botones en la parte izquierda */
 #buttons-container {
-    background-color: #3498db;
+    background-color: indianred;
     color: #fff;
     padding: 20px;
     width: 200px;
@@ -19,22 +26,41 @@ body {
 }
 
 /* Estilos para los botones */
-.btn {
-    background-color: #fff;
-    color: #3498db;
+/* Estilos para el cuadro de diálogo */
+.dialog {
+    display: none;
+    position: relative;
+    top: -40%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background-color: rgba(0, 0, 0, 0.5);
+    z-index: 1; /* Asegura que el cuadro de diálogo esté por encima del contenido */
+  }
+  
+  .dialog-content {
+    background-color: white;
+    padding: 20px;
+    color: black;
+    border-radius: 5px;
+    text-align: center;
+  }
+  
+  /* Estilos para el botón de cierre */
+  .btn {
+    background-color: #82b485;
+    color: white;
     border: none;
-    padding: 10px;
-    margin: 5px;
-    width: 100%;
-    text-align: left;
+    padding: 10px 20px;
+    border-radius: 5px;
     cursor: pointer;
-    transition: background-color 0.3s;
-}
-
-/* Estilos para los botones al pasar el mouse */
-.btn:hover {
-    background-color: #ddd;
-}
+    display: block; /* Hace que los botones sean elementos de bloque */
+    width: 100%;
+  }
+  
+  .btn:hover {
+    background-color: #00b30f8e;
+  }
+  
 
 /* Estilos para el mapa */
 #map {
@@ -84,3 +110,30 @@ body {
 #overlay:active {
     pointer-events: none;
 }
+/* Estilos para el footer */
+footer {
+    position: absolute; /* Establece la posición absoluta dentro del div buttons-container */
+    bottom: 0; /* Coloca el footer en la parte inferior del div */
+    background-color: #82b485;
+    color: white;
+    text-align: center;
+    padding: 10px;
+    width: 100%; /* Asegura que el footer tenga el ancho completo del div */
+    font-family: emoji;
+  }
+
+  /* Estilos para el botón de cierre del modal */
+#closeDialog {
+    /* background-color: #00ff224f; */
+    color: white;
+    border: none;
+    padding: 5px 10px; /* Ajusta el padding para hacerlo más pequeño */
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 10px; /* Ajusta el tamaño de la fuente para hacerlo más pequeño */
+  }
+  
+  #closeDialog:hover {
+    background-color: #00b31e77;
+  }
+  
